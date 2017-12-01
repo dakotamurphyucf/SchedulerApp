@@ -48,7 +48,7 @@ type Employee<'id> = {
     desiredHours : int
     maxHours : int
     maxNumDay : int
-    rank : int //1-10 scale 
+    rank : int  
     complexityScore : float 
 }
 
