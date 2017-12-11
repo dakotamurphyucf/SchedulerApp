@@ -1,8 +1,9 @@
 ﻿module Domain
-open System
 
+/// Days of the week
 type Day = Monday | Tuesday | Wednesday | Thursday | Friday | Saturday | Sunday
 
+/// Each day property contains a list with pairs of int's representing the shifts for the day as a range 
 type Shifts = {
     Monday : (int * int) list  
     Tuesday : (int * int) list 
@@ -12,9 +13,11 @@ type Shifts = {
     Saturday: (int * int) list 
     Sunday : (int * int) list 
 } 
-           
+
+/// Availibility of Employee for a given day of the week
 type Availibility = Open | Unavailible | Partial of (int * int)
 
+/// The weekly Availibility for an Employee
 type WeeklyAvailibility = {
     Monday : Availibility
     Tuesday : Availibility
@@ -25,47 +28,34 @@ type WeeklyAvailibility = {
     Sunday : Availibility
 }
 
-type Request<'id> = {
-     employeeId : 'id
-     date : DateTime
-}
-
-type WeeklyRequests<'id> = {
-    Monday : Request<'id> list
-    Tuesday : Request<'id> list
-    Wednesday : Request<'id> list
-    Thursday : Request<'id> list
-    Friday : Request<'id> list
-    Saturday: Request<'id> list
-    Sunday : Request<'id> list
-}
-
+/// Record that represents an Employee.
+/// The 'id can be any type. 
+/// name is a string to represent the name of the employee
+/// availibility is the weekly availbility of the employee
+/// maxHours is the maximum number of hours an employee can be scheduled in a week
+/// rank is an int 1 - 5 that represents the seniority of the employee. This is used to help prioritize senior employees when making the schedule 
+/// maxDays represents the maximum number of days that an employee can be scheduled any given day
 type Employee<'id> = {
     _id : 'id
-    firstName : string
-    lastName : string
+    name : string
     availibility : WeeklyAvailibility
-    desiredHours : int
     maxHours : int
-    maxNumDay : int
-    rank : int  
-    complexityScore : float 
+    rank : int 
+    maxDays : int 
 }
 
-
-type AggregateEmployeeData<'id> = {
-     employee : Employee<'id>
-     hourTotal : int 
-     daysScheduled : Day list 
-}
-
+/// List of Employees
 type Staff<'id> = Employee<'id> list 
 
+/// Record that represents the desired Number of Employees to be scheduled during each hour of operation
+/// operationHours represents the start and end time for a workday. 0 - 24 scale
+/// distribution is a list of int's that represnts the labor count for each hour
 type LaborDistribution = {
      operationHours : int * int
      distribution : int list 
 }
 
+/// Record that contains the LaborDistribution for each day of the week
 type  LaborRequirements = {
     Monday : LaborDistribution  
     Tuesday : LaborDistribution 
@@ -76,13 +66,16 @@ type  LaborRequirements = {
     Sunday : LaborDistribution 
 }
 
-
-
+/// Record that contains scheduled shifts for a workday
+/// shifts is a list of tuples containing an 'id option and the shift. 
+/// Note: a shift with None means the shift was not assigned to an employee
 type WorkDay<'id> = {
    laborDistribution : LaborDistribution
    shifts :  ('id Option * (int * int)) list     
 }
 
+///  Record that contains the weeks schedule. Each day contains a WorkDay Option. 
+/// Note: a day with None as the value implies the buisness is closed.
 type Schedule<'id> = {
     Monday : WorkDay<'id> Option 
     Tuesday : WorkDay<'id> Option
@@ -93,6 +86,7 @@ type Schedule<'id> = {
     Sunday : WorkDay<'id> Option
 }
 
+/// Unit Schedule 
 let private initialS =  {
           Monday = None
           Tuesday = None
@@ -103,33 +97,60 @@ let private initialS =  {
           Sunday = None
 }
 
-type InprogressSchedule<'id> = {
+/// return type of produceWorkWeek function. Used to help package data in schedule building logic
+type SchedulePayload<'id> = {
      schedule  : Schedule<'id>
      employeePool : Staff<'id>
 }
 
-let rec getLastHour n distribution = 
+/// construcrts an employee record
+let createEmployee (id, name, availibility, maxHours, rank, maxDays) =
+     {
+          _id = id
+          name = name
+          availibility = availibility
+          maxHours = maxHours
+          rank = rank
+          maxDays = maxDays
+     }  
+
+/// returns the end time of a shift given a distribution and the index representing the start of a shift in the distribution
+let rec getShiftEndTime n distribution = 
      match n with
-     | _ when (List.length distribution - 1) = n ->
-         if distribution.[n] < distribution.[n - 1] then n else n + 1
-     | _ when distribution.[n] <= distribution.[n + 1] -> getLastHour (n + 1) distribution
+     /// case when n equals the last index in the list
+     | _ when (List.length distribution - 1) = n -> n + 1
+     ///  if the next hour contains the same number of employees or more return getShiftEndTime with n + 1
+     | _ when distribution.[n] <= distribution.[n + 1] -> getShiftEndTime (n + 1) distribution
+     /// if the next hour contains less employees than return n + 1 as the end time for the shift
      | _ -> n + 1
-     
+
+/// given a labor distribution  and empty list generatres a list of shifts that realize the given labor distribution
 let rec getShifts laborD shifts = 
      let {operationHours = opening, _; distribution = distribution} = laborD
+     /// stop condition for recursive logic. Return the shifts when no more labor hours are left in the distribution
      if List.forall (fun x -> x = 0) distribution then shifts
+     /// generate the next shift from the distribution
      else
-          let firstHour = List.findIndex (fun x -> x <> 0) distribution 
-          let start = opening + firstHour 
-          let lastHour = getLastHour firstHour distribution 
-          let stop = opening + lastHour
-          let updatedDistribution = List.mapi (fun i x -> 
-            if i < lastHour && x - 1 >= 0 then x - 1 else x) distribution
-          getShifts {laborD with distribution = updatedDistribution} (shifts @ [start, stop])
+          /// the first index where the value is not zero
+          let startHour = List.findIndex (fun x -> x <> 0) distribution 
 
-//assume that prefilled shifts are removed from labor          
-//function that takes LaborRequirements and returns Shifts
-// currently not being used
+          /// hour where shift finishes relative to index 0 of distribution list.
+          /// If getShiftEndTime results in a shift longer than 8 hours then set stopHour so that the shift is only 8 hours 
+          let stopHour = getShiftEndTime startHour distribution |> (fun x -> if x - startHour <= 8 then x else startHour + 8)
+          
+          /// add the opening value to startHour and stopHour to get the true start and stop times  
+          let startTime = opening + startHour
+          let stopTime = opening + stopHour
+
+          /// reduce the labor count by 1 for each index that is contained in the generated shift
+          let updatedDistribution = List.mapi (fun i x -> 
+            if i < stopHour && x - 1 >= 0 then x - 1 else x) distribution
+          
+          /// append the generated shift to the shifts list and run getShifts with the updated distribution
+          getShifts {laborD with distribution = updatedDistribution} (shifts @ [startTime, stopTime])
+
+       
+/// function that takes LaborRequirements and returns Shifts
 let laborRequirementsToShifts (laborR: LaborRequirements) : Shifts = 
      {
           Monday = getShifts laborR.Monday []
@@ -142,25 +163,28 @@ let laborRequirementsToShifts (laborR: LaborRequirements) : Shifts =
      }
 
 
-
+/// given an availibility returns a float representing its complexity 
 let calcAvaComplexity = function
-| Open -> 0
-| Unavailible -> 1
-| Partial (x, y) -> 1 / (y - x + 1)
+| Open -> 0.0
+| Unavailible -> 1.0
+/// this definition was chosen so that as the length of the shift approached zero the value approaches 1.0 , and also bounds its value above 0.0 
+| Partial (x, y) -> 1.0 / (float y - float x + 1.0)
 
-let (<+>) x y = (calcAvaComplexity x) + (calcAvaComplexity y)
-
+/// Uses an employees availibility and  rank to calculate the employees scheduling complexity
+/// Note: bigger values represent greater complexity
 let calcEmployeeComplexity  (wAvailibility: WeeklyAvailibility) (rank: int) = 
    let { 
         WeeklyAvailibility.Monday = mon; Tuesday = tue; Wednesday = wed;
         Thursday = thurs; Friday = fri; Saturday = sat; Sunday = sun
         } = wAvailibility
-   (mon <+> tue)  + (wed <+> thurs ) + (fri <+> sat) + (sun <+> Open) + rank
-     
-
+   /// this definition uses the sum of each days availbility complexity and the rank to determine complexity
+   /// intuitivley we wanted scheduling complexity to increase for more senior employees. Also employeess with less availibility should have increased scheduling complexity
+   float rank + List.sumBy calcAvaComplexity [mon; tue; wed; thurs; fri; sat; sun;]
+   
 let getLaborTotal laborD = 
      List.sum laborD.distribution
 
+/// given the length of operating hours and the days availibility for all employees returns the availble labor hours for the workday
 let calcDaysAvailibleLabor dayLength availibility =
  
      let folder state a = 
@@ -171,18 +195,19 @@ let calcDaysAvailibleLabor dayLength availibility =
 
      List.fold folder 0 availibility
 
+/// returns the scheduling complexity of a work day given a labor distribution and the availibility for all employees that day.
+/// Note: smaller values represent greater complexity
 let calcDayComplexity laborD availibility = 
      let total = getLaborTotal laborD
      let (x, y) = laborD.operationHours
      let dayLength = y - x
      let availible = calcDaysAvailibleLabor dayLength availibility
-     //(total * (availible  +  total))/ availible
+     /// this definition is used so that smaller the difference between availible labor and required labor the more complex the scheduling is for the day
      availible - total
-let (>%>) l f = List.filter f l
 
+/// given a day and an employee returns the employees availibility for that day
 let getEmployeeAvailibility day employee = 
      match day with 
-     // if an employee has been scheduled their max amount then consider them unavialible
      | Monday -> employee.availibility.Monday
      | Tuesday -> employee.availibility.Tuesday
      | Wednesday  -> employee.availibility.Wednesday
@@ -191,6 +216,7 @@ let getEmployeeAvailibility day employee =
      | Saturday  -> employee.availibility.Saturday
      | Sunday -> employee.availibility.Sunday
 
+/// returns an updated weekly availibility with the the availibility for the given day changed
 let updateEmployeeAvailibility day availbility (wAve: WeeklyAvailibility)  =
      match day with 
      | Monday -> {wAve with Monday = availbility}
@@ -201,13 +227,16 @@ let updateEmployeeAvailibility day availbility (wAve: WeeklyAvailibility)  =
      | Saturday  -> {wAve with Saturday = availbility}
      | Sunday -> {wAve with Sunday = availbility}
 
-let isEmployeeAvailible ignoreMaxHours day (start, stop) (employee:Employee<'id>) =
+/// returns a bool indicating if the employee is availible for the given day and shift
+let isEmployeeAvailible  day (start, stop) (employee:Employee<'id>) =
      let shiftLength = stop - start
-     let {maxHours = maxHours} = employee
+     let {maxHours = maxHours; maxDays = maxDays} = employee
      let availibility = getEmployeeAvailibility day employee
-
      match shiftLength with
-     | l when maxHours >= l || ignoreMaxHours ->
+     /// return false when the employee has no more unscheduled days left
+     | _ when maxDays <= 0 -> false
+     /// when the employee has enough availible hours
+     | l when maxHours >= l ->
          match availibility with
          | Open -> true
          | Unavailible -> false
@@ -217,44 +246,43 @@ let isEmployeeAvailible ignoreMaxHours day (start, stop) (employee:Employee<'id>
           | _ -> false
      | _ -> false
 
-//if the first option is a none this functions returns the backup option
-let (<||>) first backup = 
-     match first with 
-     | Some _ -> first
-     | None -> backup
-        
-
+/// returns a tuple of assigned shifts and updated list of employees given a day, staff and list of unassigned shifts
 let rec assignShifts day staff unassigned  assigned =
      match unassigned with
      | head :: tail ->
-          let maxHoursObserverd = List.tryFind (isEmployeeAvailible false day head ) staff
-          let maxHoursIgnored = List.tryFind (isEmployeeAvailible true day head ) staff
-          
-          match maxHoursObserverd <||> maxHoursIgnored with
+          match List.tryFind (isEmployeeAvailible day head ) staff with
           | Some employee ->
-               let maxNumDay =  employee.maxNumDay - 1
+               /// reduce employees maxdays and maxhours
+               let maxDays =  employee.maxDays - 1
                let maxHours = employee.maxHours - (snd head - fst head)
                
-               let updatedEmployee = {employee with availibility = updateEmployeeAvailibility day Unavailible employee.availibility; maxNumDay = maxNumDay; maxHours = maxHours;}
+               let updatedEmployee = {
+                    employee with 
+                         availibility = updateEmployeeAvailibility day Unavailible employee.availibility
+                         maxHours = maxHours
+                         maxDays = maxDays
+               }
+
                let updatedAssigned = assigned @ [(Some employee._id, head)]
-              // put employess at the end of the lst once used so that priority is given to employees not scheduled that day yet
+              /// put employess at the end of the lst once used so that priority is given to employees not scheduled that day yet
                let updatedStaff = (List.filter (fun e -> e._id <> employee._id ) staff) @ [updatedEmployee]
                assignShifts day updatedStaff  tail updatedAssigned
-          //if no one is avialible to take the shift
+
+          /// if no one is availible to take the shift
           | None -> assignShifts day staff tail (assigned @ [(None, head)])
      | [] ->
-          //once done make all employees unavailible for that day, this is so that this day no longer affects the employees schedule complexity
+          /// once done make all employees unavailible for that day, this is so that this day no longer affects the employees schedule complexity when remaining day are scheduled
            (assigned, List.map (fun e -> {e with availibility = updateEmployeeAvailibility day Unavailible e.availibility}) staff)
            
-//use shifts and day and staff list to return a tuple of workday, updatedEmployee list
-let createWorkDay (l, day, s) staff =
-     let orderedStaff = List.sortBy (fun e -> calcEmployeeComplexity e.availibility e.rank) staff
+/// use shifts and day and staff list to return a tuple of workday, updatedEmployee list
+let scheduleWorkDay (l, day, s) staff =
+     /// sort the staff by most complex scheduling 
+     let orderedStaff = List.sortBy (fun e -> -1.0 * calcEmployeeComplexity e.availibility e.rank) staff
      let (shifts, updatedStaff) = assignShifts day orderedStaff s []
    
      ({laborDistribution = l; shifts = shifts}, updatedStaff)
 
-// given a schedule and a day and a workday return a schedule with the updated workday
-// use pattern matching on day type to implemeant this 
+/// given a schedule and a day and a workday return a schedule with the updated workday
 let updateSchedule day (schedule: Schedule<'id>) workDay =
      match day with 
      | Monday -> {schedule with Monday = Some workDay}
@@ -265,33 +293,37 @@ let updateSchedule day (schedule: Schedule<'id>) workDay =
      | Saturday  -> {schedule with Saturday = Some workDay}
      | Sunday -> {schedule with Sunday = Some workDay}
 
-let updateInProgressSchedule state (l, day, shifts) = 
-      let (w, e) = createWorkDay (l, day, shifts) state.employeePool 
+/// return an updated schedule payload with the given day scheduled 
+let updateSchedulePayload state (l, day, shifts) = 
+      let (w, e) = scheduleWorkDay (l, day, shifts) state.employeePool 
       {schedule = updateSchedule day state.schedule w; employeePool = e}
 
+/// returns  the availibility of the employees for the given day
 let getAvailibility day employees  =
      List.map (fun e -> getEmployeeAvailibility day e) employees
-     
-let mutable debugCount = 0;
 
+/// returns a schedule payload with the schedule data applied 
 let rec createSchedule  state data =
-     let {schedule = s; employeePool = staff} = state
-     // printfn "%i : " debugCount
-     // printfn "%A" data
+     let {employeePool = staff} = state
+     /// returns the scheduling complexity for a work day 
      let sort (l, day, _) = 
           let availbility = getAvailibility day staff
-          -1 * (calcDayComplexity l availbility)
+          calcDayComplexity l availbility
+
+     /// sort the schedule data from most to least complex day
      let reOrdered = List.sortBy sort data
-     // printfn "%A" reOrdered
-     // printfn "\n"
-     // debugCount <- (debugCount + 1)
+   
      match reOrdered with
      | head :: tail -> 
-          let newState = updateInProgressSchedule state head
+          /// update the payload with the most complex day scheduled
+          let newState = updateSchedulePayload state head
+          /// run createSchedule with the new state and remaining schedule data
+          /// Note: this function is called recursivley with updated employee data so the schedule complexity for employees and days are recalculated with each function call 
           createSchedule newState tail
-     | [] -> s
+     /// no more data to be proccessed so return the state
+     | [] -> state
 
-//assumes that request have aready been used to update the availibility of the employess before sending them to this function
+/// given labor requirements and staff returns the schedule payload
 let produceWorkWeek (l: LaborRequirements) staff = 
      [
           (l.Monday,  Monday);
@@ -302,6 +334,7 @@ let produceWorkWeek (l: LaborRequirements) staff =
           (l.Saturday, Saturday)
           (l.Sunday, Sunday)
      ] 
+     /// produce the shifts for each workday 
      |> List.map (fun (l, day) -> (l, day, getShifts l [])) 
      |> createSchedule {schedule = initialS; employeePool = staff;}
      
